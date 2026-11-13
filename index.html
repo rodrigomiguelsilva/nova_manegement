@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOVA Management</title><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="hidden">
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-mark">N</div><div><b>NOVA</b><small>MANAGEMENT</small></div></div>
+    <div class="side-label">ADMINISTRAÇÃO</div>
+    <button class="nav-item active" data-tab="jobs"><span class="nav-icon">▦</span> Empregos <span class="nav-arrow">›</span></button>
+    <button class="nav-item" data-tab="doors"><span class="nav-icon">▣</span> Doorlocks <span class="nav-arrow">›</span></button>
+    <div class="sidebar-bottom"><div class="online-dot"></div><span>Sistema operacional</span><small>ESX LEGACY</small></div>
+  </aside>
+  <section class="workspace">
+    <header class="topbar"><div><span class="eyebrow">PAINEL DE CONTROLO</span><h1 id="pageTitle">Gestão de empregos</h1></div><div class="top-actions"><span class="admin-pill"><i></i> ADMINISTRADOR</span><button id="close" class="close-btn" title="Fechar">×</button></div></header>
+    <main>
+      <section id="jobs" class="panel active">
+        <div class="intro-row"><div><h2>Empregos do servidor</h2><p>Cria, consulta e gere os empregos e respetivos cargos.</p></div><button id="showJobForm" class="primary"><b>＋</b> Criar emprego</button></div>
+        <div class="stats"><div class="stat-card"><span>EMPREGOS REGISTADOS</span><strong id="jobCount">0</strong><small>Na base de dados ESX</small></div><div class="stat-card"><span>RANKS CONFIGURADOS</span><strong id="gradeCount">0</strong><small>Todos os cargos existentes</small></div></div>
+        <div id="jobForm" class="form-card hidden"><div class="form-heading"><div><h3>Novo emprego</h3><p>Define a identificação e os cargos do emprego.</p></div><span class="form-symbol">＋</span></div>
+          <div class="form-grid"><label>Nome interno<input id="jobName" placeholder="ex.: mechanic" maxlength="32"></label><label>Nome apresentado<input id="jobLabel" placeholder="ex.: Mecânico" maxlength="50"></label></div>
+          <div class="grade-heading"><b>Cargos / ranks</b><button id="addGrade" class="text-btn">＋ Adicionar cargo</button></div><div id="grades"></div>
+          <div class="form-actions"><button id="cancelJob" class="ghost">Cancelar</button><button id="createJob" class="primary">Guardar emprego <span>→</span></button></div>
+        </div>
+        <div class="list-heading"><div><h3>Empregos existentes</h3><p>Lista atual da tabela jobs.</p></div><span class="list-count" id="jobListCount">0 REGISTOS</span></div>
+        <div id="jobList" class="list"></div>
+      </section>
+      <section id="doors" class="panel">
+        <div class="intro-row"><div><h2>Fechaduras do servidor</h2><p>Regista portas e define quais os empregos autorizados.</p></div><button id="showDoorForm" class="primary"><b>＋</b> Adicionar porta</button></div>
+        <div class="stats"><div class="stat-card"><span>PORTAS REGISTADAS</span><strong id="doorCount">0</strong><small>Fechaduras configuradas</small></div><div class="stat-card"><span>CONTROLO DE ACESSO</span><strong>ESX</strong><small>Permissões por emprego</small></div></div>
+        <div id="doorForm" class="form-card hidden"><div class="form-heading"><div><h3>Adicionar fechadura</h3><p>Aponta para a porta no jogo antes de guardar.</p></div><span class="form-symbol">▣</span></div>
+          <label>Nome da porta<input id="doorLabel" placeholder="ex.: Esquadra — Entrada principal" maxlength="100"></label>
+          <label>Empregos autorizados<input id="doorJobs" placeholder="police, ambulance (vazio = todos)"></label>
+          <div class="hint">A posição e o modelo são capturados a partir do objeto que estiveres a apontar.</div>
+          <div class="form-actions"><button id="cancelDoor" class="ghost">Cancelar</button><button id="createDoor" class="primary">Capturar e guardar <span>→</span></button></div>
+        </div>
+        <div class="list-heading"><div><h3>Portas existentes</h3><p>Fechaduras guardadas na base de dados.</p></div><span class="list-count" id="doorListCount">0 REGISTOS</span></div>
+        <div id="doorList" class="list"></div>
+      </section>
+    </main>
+    <footer><span class="footer-brand">NOVA</span><span>SECURE MANAGEMENT INTERFACE</span><span class="version">v1.0.1</span></footer>
+  </section>
+  <div id="confirmModal" class="modal hidden"><div class="modal-card"><div class="modal-icon">!</div><h3 id="modalTitle">Confirmar eliminação</h3><p id="modalText">Tens a certeza?</p><div class="modal-actions"><button id="modalCancel" class="ghost">Cancelar</button><button id="modalConfirm" class="danger-solid">Eliminar</button></div></div></div>
+  <div id="toast" class="toast hidden"></div>
+</div>
+<script src="app.js"></script>
+</body></html>
