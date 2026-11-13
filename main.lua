@@ -1,132 +1,221 @@
 local ESX = exports['es_extended']:getSharedObject()
 local Doors = {}
-local menuOpen = false
 
-local function notify(msg)
-    ESX.ShowNotification(msg)
-end
-
-RegisterNetEvent('nova_management:notify', notify)
-RegisterNetEvent('nova_management:setDoors', function(data) Doors = data or {} end)
-RegisterNetEvent('nova_management:doorState', function(id, locked)
-    if Doors[id] then Doors[id].locked = locked end
-end)
-
-RegisterNetEvent('nova_management:refresh', function()
-    openMenu()
-end)
-
-local function requestData()
-    ESX.TriggerServerCallback('nova_management:getData', function(data)
-        if not data then notify('Sem permissões.') return end
-        SendNUIMessage({action = 'open', data = data})
-        SetNuiFocus(true, true)
-        menuOpen = true
-    end)
-end
-
-function openMenu()
-    ESX.TriggerServerCallback('nova_management:isAdmin', function(ok)
-        if not ok then notify('Não tens permissões para usar este painel.') return end
-        requestData()
-    end)
-end
-
-if Config.EnableCommand then
-    RegisterCommand(Config.Command, function()
-        if menuOpen then
-            SetNuiFocus(false, false)
-            SendNUIMessage({action='close'})
-            menuOpen = false
-        else
-            openMenu()
-        end
-    end)
-end
-
-RegisterNUICallback('close', function(_, cb)
-    SetNuiFocus(false, false)
-    menuOpen = false
-    cb('ok')
-end)
-
-RegisterNUICallback('createJob', function(data, cb)
-    TriggerServerEvent('nova_management:createJob', data)
-    cb('ok')
-end)
-
-RegisterNUICallback('deleteJob', function(data, cb)
-    TriggerServerEvent('nova_management:deleteJob', data.name)
-    cb('ok')
-end)
-
-RegisterNUICallback('updateJob', function(data, cb)
-    TriggerServerEvent('nova_management:updateJob', data)
-    cb('ok')
-end)
-
-RegisterNUICallback('addDoor', function(data, cb)
-    local ped = PlayerPedId()
-    local coords = GetEntityCoords(ped)
-    local hit, entity = getTargetEntity()
-    if hit and entity and entity ~= 0 then
-        coords = GetEntityCoords(entity)
-        data.model = tostring(GetEntityModel(entity))
+local function refreshESXJobs()
+    -- ESX Legacy mantém os empregos em cache; atualizar o cache permite usar /setjob
+    -- imediatamente sem reiniciar o servidor.
+    if ESX.RefreshJobs then
+        ESX.RefreshJobs()
     else
-        data.model = '0'
+        print('[nova_management] AVISO: ESX.RefreshJobs() não existe nesta versão do es_extended. Reinicia o resource es_extended/servidor.')
     end
-    data.coords = {x=coords.x, y=coords.y, z=coords.z}
-    TriggerServerEvent('nova_management:addDoor', data)
-    cb('ok')
-end)
-
-RegisterNUICallback('deleteDoor', function(data, cb)
-    TriggerServerEvent('nova_management:deleteDoor', data.id)
-    cb('ok')
-end)
-
-function getTargetEntity()
-    local camCoords = GetGameplayCamCoord()
-    local direction = RotationToDirection(GetGameplayCamRot(2))
-    local destination = camCoords + direction * 5.0
-    local ray = StartShapeTestRay(camCoords.x, camCoords.y, camCoords.z, destination.x, destination.y, destination.z, 16, PlayerPedId(), 0)
-    local _, hit, _, _, entity = GetShapeTestResult(ray)
-    return hit == 1, entity
 end
 
-function RotationToDirection(rotation)
-    local adjusted = vector3(math.rad(rotation.x), math.rad(rotation.y), math.rad(rotation.z))
-    local direction = vector3(-math.sin(adjusted.z) * math.abs(math.cos(adjusted.x)), math.cos(adjusted.z) * math.abs(math.cos(adjusted.x)), math.sin(adjusted.x))
-    return direction
+
+local function isAdmin(src)
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return false end
+    local group = xPlayer.getGroup and xPlayer.getGroup() or 'user'
+    return Config.AllowedGroups[group] == true
 end
 
-CreateThread(function()
-    while true do
-        Wait(Config.DoorCheckInterval)
-        local ped = PlayerPedId()
-        local coords = GetEntityCoords(ped)
-        for id, door in pairs(Doors) do
-            local pos = door.coords
-            if pos and #(coords - vector3(pos.x, pos.y, pos.z)) < Config.DoorDistance then
-                if IsControlJustReleased(0, 38) then
-                    TriggerServerEvent('nova_management:toggleDoor', id)
-                    Wait(500)
-                end
-                if door.locked then
-                    local entity = GetClosestObjectOfType(pos.x, pos.y, pos.z, 1.5, tonumber(door.model) or 0, false, false, false)
-                    if entity ~= 0 then
-                        FreezeEntityPosition(entity, true)
-                        SetEntityHeading(entity, GetEntityHeading(entity))
-                    end
-                else
-                    local entity = GetClosestObjectOfType(pos.x, pos.y, pos.z, 1.5, tonumber(door.model) or 0, false, false, false)
-                    if entity ~= 0 then FreezeEntityPosition(entity, false) end
-                end
-            end
+local function notify(src, msg)
+    TriggerClientEvent('nova_management:notify', src, msg)
+end
+
+local function loadDoors()
+    local rows = MySQL.query.await('SELECT * FROM nova_doorlocks', {})
+    Doors = {}
+    for _, row in ipairs(rows or {}) do
+        row.coords = json.decode(row.coords or '{}')
+        row.jobs = json.decode(row.jobs or '[]')
+        row.locked = row.locked == 1
+        Doors[tonumber(row.id)] = row
+    end
+    TriggerClientEvent('nova_management:setDoors', -1, Doors)
+end
+
+MySQL.ready(function()
+    MySQL.query([[
+        CREATE TABLE IF NOT EXISTS `nova_doorlocks` (
+            `id` int NOT NULL AUTO_INCREMENT,
+            `label` varchar(100) NOT NULL,
+            `model` varchar(100) NOT NULL,
+            `coords` longtext NOT NULL,
+            `jobs` longtext NOT NULL,
+            `locked` tinyint(1) NOT NULL DEFAULT 1,
+            PRIMARY KEY (`id`)
+        )
+    ]])
+    loadDoors()
+end)
+
+ESX.RegisterServerCallback('nova_management:isAdmin', function(src, cb)
+    cb(isAdmin(src))
+end)
+
+ESX.RegisterServerCallback('nova_management:getData', function(src, cb)
+    if not isAdmin(src) then cb(nil) return end
+    local jobs = MySQL.query.await('SELECT name, label FROM jobs ORDER BY name')
+    local grades = MySQL.query.await('SELECT job_name, grade, name, label, salary FROM job_grades ORDER BY job_name, grade')
+    cb({ jobs = jobs or {}, grades = grades or {}, doors = Doors })
+end)
+
+RegisterNetEvent('nova_management:createJob', function(data)
+    local src = source
+    if not isAdmin(src) then return end
+    if type(data) ~= 'table' or type(data.name) ~= 'string' or type(data.label) ~= 'string' then return end
+    local name = string.lower(data.name):gsub('[^%w_]', '')
+    local label = data.label:sub(1, 50)
+    if #name < 2 or #name > 32 or label == '' then notify(src, 'Nome ou label inválido.') return end
+
+    local exists = MySQL.scalar.await('SELECT name FROM jobs WHERE name = ?', {name})
+    if exists then notify(src, 'Esse job já existe.') return end
+
+    local grades = data.grades
+    if type(grades) ~= 'table' or #grades == 0 then
+        grades = {{name = 'employee', label = 'Employee', salary = 0}}
+    end
+
+    MySQL.insert.await('INSERT INTO jobs (name, label) VALUES (?, ?)', {name, label})
+    for i, grade in ipairs(grades) do
+        if i > 20 then break end
+        local gradeName = tostring(grade.name or ('grade' .. (i - 1))):lower():gsub('[^%w_]', '')
+        local gradeLabel = tostring(grade.label or gradeName):sub(1, 50)
+        local salary = math.max(0, math.min(1000000, math.floor(tonumber(grade.salary) or 0)))
+        MySQL.insert.await(
+            'INSERT INTO job_grades (job_name, grade, name, label, salary) VALUES (?, ?, ?, ?, ?)',
+            {name, i - 1, gradeName, gradeLabel, salary}
+        )
+    end
+    refreshESXJobs()
+    notify(src, 'Job criado e registado no ESX. Já podes usar /setjob.')
+    TriggerClientEvent('nova_management:refresh', src)
+end)
+
+RegisterNetEvent('nova_management:deleteJob', function(jobName)
+    local src = source
+    if not isAdmin(src) then
+        notify(src, 'Não tens permissões para apagar empregos.')
+        return
+    end
+
+    if type(jobName) ~= 'string' then
+        notify(src, 'Nome de emprego inválido.')
+        return
+    end
+
+    jobName = jobName:lower():gsub('[^%w_]', '')
+    if jobName == '' or jobName == 'unemployed' then
+        notify(src, 'Não podes apagar este emprego.')
+        return
+    end
+
+    local exists = MySQL.scalar.await('SELECT name FROM jobs WHERE name = ? LIMIT 1', {jobName})
+    if not exists then
+        notify(src, 'O emprego não existe na base de dados.')
+        TriggerClientEvent('nova_management:refresh', src)
+        return
+    end
+
+    local success = MySQL.transaction.await({
+        { query = 'DELETE FROM job_grades WHERE job_name = ?', values = {jobName} },
+        { query = 'DELETE FROM jobs WHERE name = ?', values = {jobName} }
+    })
+
+    if not success then
+        notify(src, 'Erro ao apagar o emprego. Verifica a consola e a base de dados.')
+        return
+    end
+
+    refreshESXJobs()
+    notify(src, 'Emprego ' .. jobName .. ' apagado com sucesso.')
+    TriggerClientEvent('nova_management:refresh', src)
+end)
+
+RegisterNetEvent('nova_management:updateJob', function(data)
+    local src = source
+    if not isAdmin(src) then notify(src, 'Não tens permissões para editar empregos.') return end
+    if type(data) ~= 'table' or type(data.name) ~= 'string' or type(data.grades) ~= 'table' then return end
+    local jobName = data.name:lower():gsub('[^%w_]', '')
+    if jobName == '' then notify(src, 'Nome de emprego inválido.') return end
+    local exists = MySQL.scalar.await('SELECT name FROM jobs WHERE name = ? LIMIT 1', {jobName})
+    if not exists then notify(src, 'Esse emprego já não existe.') return end
+    if #data.grades < 1 or #data.grades > 20 then notify(src, 'O emprego tem de ter entre 1 e 20 grades.') return end
+
+    local seen = {}
+    local queries = {{query='DELETE FROM job_grades WHERE job_name = ?', values={jobName}}}
+    for i, grade in ipairs(data.grades) do
+        local gradeName = tostring(grade.name or ''):lower():gsub('[^%w_]', '')
+        local gradeLabel = tostring(grade.label or ''):sub(1, 50)
+        local salary = math.max(0, math.min(1000000, math.floor(tonumber(grade.salary) or 0)))
+        if gradeName == '' or gradeLabel == '' or seen[gradeName] then
+            notify(src, 'Nome/label de grade inválido ou repetido.')
+            return
         end
+        seen[gradeName] = true
+        queries[#queries+1] = {query='INSERT INTO job_grades (job_name, grade, name, label, salary) VALUES (?, ?, ?, ?, ?)', values={jobName, i-1, gradeName, gradeLabel, salary}}
     end
+    local success = MySQL.transaction.await(queries)
+    if not success then notify(src, 'Não foi possível guardar os grades. Consulta a consola.') return end
+    refreshESXJobs()
+    notify(src, 'Grades atualizados. Podes usar /setjob ' .. jobName .. ' 0-' .. tostring(#data.grades-1) .. '.')
+    TriggerClientEvent('nova_management:refresh', src)
 end)
 
-AddEventHandler('onResourceStop', function(resource)
-    if resource == GetCurrentResourceName() then SetNuiFocus(false, false) end
+RegisterNetEvent('nova_management:addDoor', function(data)
+    local src = source
+    if not isAdmin(src) then return end
+    if type(data) ~= 'table' or type(data.label) ~= 'string' or type(data.model) ~= 'string' or type(data.coords) ~= 'table' then return end
+    local coords = data.coords
+    local x, y, z = tonumber(coords.x), tonumber(coords.y), tonumber(coords.z)
+    if not x or not y or not z then return end
+    local jobs = {}
+    for _, job in ipairs(data.jobs or {}) do
+        if type(job) == 'string' and #job <= 32 then jobs[#jobs+1] = job end
+    end
+    local id = MySQL.insert.await(
+        'INSERT INTO nova_doorlocks (label, model, coords, jobs, locked) VALUES (?, ?, ?, ?, 1)',
+        {data.label:sub(1, 100), data.model, json.encode({x=x,y=y,z=z}), json.encode(jobs)}
+    )
+    notify(src, 'Doorlock criado com ID ' .. tostring(id))
+    loadDoors()
+    TriggerClientEvent('nova_management:refresh', src)
+end)
+
+RegisterNetEvent('nova_management:deleteDoor', function(id)
+    local src = source
+    if not isAdmin(src) then return end
+    id = tonumber(id)
+    if not id then return end
+    MySQL.update.await('DELETE FROM nova_doorlocks WHERE id = ?', {id})
+    notify(src, 'Doorlock eliminado.')
+    loadDoors()
+    TriggerClientEvent('nova_management:refresh', src)
+end)
+
+RegisterNetEvent('nova_management:toggleDoor', function(id)
+    local src = source
+    id = tonumber(id)
+    local door = id and Doors[id]
+    if not door then return end
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    local allowed = #door.jobs == 0
+    for _, job in ipairs(door.jobs) do
+        if xPlayer.job and xPlayer.job.name == job then allowed = true break end
+    end
+    if not allowed and not isAdmin(src) then
+        notify(src, 'Não tens acesso a esta porta.')
+        return
+    end
+
+    door.locked = not door.locked
+    MySQL.update.await('UPDATE nova_doorlocks SET locked = ? WHERE id = ?', {door.locked and 1 or 0, id})
+    TriggerClientEvent('nova_management:doorState', -1, id, door.locked)
+end)
+
+AddEventHandler('esx:playerLoaded', function(playerId)
+    TriggerClientEvent('nova_management:setDoors', playerId, Doors)
 end)
